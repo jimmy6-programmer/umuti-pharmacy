@@ -1,44 +1,57 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { verifyToken } from "@/lib/auth/utils";
+import { UserRole } from "@/lib/auth/types";
 
-const publicPaths = ["/login", "/signup", "/"];
-const roleAccess: Record<string, string[]> = {
-  "/dashboard": ["admin", "pharmacist", "viewer"],
-  "/dashboard/stock": ["admin", "pharmacist"],
-  "/dashboard/requisitions": ["admin", "pharmacist"],
-  "/dashboard/analysis": ["admin", "pharmacist", "viewer"],
-  "/dashboard/orders": ["admin", "pharmacist"],
+const publicPaths = ["/", "/signup", "/forgot-password", "/reset-password"];
+
+const roleBasedPaths: Record<string, string[]> = {
+  "/dashboard": ["ADMIN", "PHARMACY"],
+  "/dashboard/analysis": ["ADMIN", "PHARMACY"],
+  "/dashboard/stock": ["ADMIN", "PHARMACY"],
+  "/dashboard/requisitions": ["ADMIN", "PHARMACY"],
+  "/dashboard/orders": ["ADMIN", "PHARMACY"],
 };
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (publicPaths.includes(pathname)) {
+  // Allow public paths
+  if (publicPaths.some(path => pathname.startsWith(path))) {
     return NextResponse.next();
   }
 
-  const userRole = request.cookies.get("umuti_role")?.value;
-
-  if (!userRole && pathname.startsWith("/dashboard")) {
-    // In production, redirect to login. For demo, set default role.
-    const response = NextResponse.next();
-    response.cookies.set("umuti_role", "admin", { path: "/" });
-    return response;
+  // Check for token
+  const token = request.cookies.get("umuti_token")?.value;
+  
+  if (!token) {
+    return NextResponse.redirect(new URL("/", request.url));
   }
 
-  if (userRole) {
-    const matchedPath = Object.keys(roleAccess).find((p) =>
-      pathname.startsWith(p)
+  try {
+    // Verify token
+    const decoded = verifyToken(token);
+    
+    // Check role-based access
+    const matchingPattern = Object.keys(roleBasedPaths).find(pattern => 
+      pathname.startsWith(pattern)
     );
-    if (matchedPath) {
-      const allowed = roleAccess[matchedPath];
-      if (!allowed.includes(userRole)) {
+
+    if (matchingPattern) {
+      const allowedRoles = roleBasedPaths[matchingPattern];
+      if (!allowedRoles.includes(decoded.role)) {
         return NextResponse.redirect(new URL("/dashboard", request.url));
       }
     }
-  }
 
-  return NextResponse.next();
+    return NextResponse.next();
+  } catch (error) {
+    // Token is invalid or expired
+    const response = NextResponse.redirect(new URL("/", request.url));
+    response.cookies.delete("umuti_token");
+    response.cookies.delete("umuti_role");
+    return response;
+  }
 }
 
 export const config = {

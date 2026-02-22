@@ -1,34 +1,90 @@
 "use client";
 
 import { useRef, useState, useCallback } from "react";
+import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
-import { Upload, FileText, X } from "lucide-react";
+import { Upload, FileText, X, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 
 interface FileUploadProps {
-  id: string;
+  id?: string;
   accept?: string;
-  onFileSelect: (file: File) => void;
+  onFileSelect?: (file: File) => void;
+  onDataParsed?: (data: Record<string, string>[]) => void;
+  label?: string;
   error?: string;
 }
 
 export function FileUpload({
   id,
-  accept = ".pdf,.jpg,.jpeg,.png",
+  accept = ".csv,.xlsx,.xls,.pdf,.jpg,.jpeg,.png",
   onFileSelect,
+  onDataParsed,
+  label = "Upload Document",
   error,
 }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
 
+  const parseFile = useCallback(async (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    
+    if (ext === "csv") {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          if (results.data && results.data.length > 0) {
+            onDataParsed?.(results.data as Record<string, string>[]);
+          } else {
+            toast.error("No data found in CSV file");
+          }
+        },
+        error: (err) => {
+          toast.error(`Failed to parse CSV: ${err.message}`);
+        }
+      });
+    } else if (ext === "xlsx" || ext === "xls") {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const wb = XLSX.read(evt.target?.result, { type: "binary" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const data = XLSX.utils.sheet_to_json<Record<string, string>>(ws);
+          if (data && data.length > 0) {
+            onDataParsed?.(data);
+          } else {
+            toast.error("No data found in Excel file");
+          }
+        } catch (err) {
+          toast.error("Failed to parse Excel file");
+        }
+      };
+      reader.onerror = () => {
+        toast.error("Failed to read file");
+      };
+      reader.readAsBinaryString(file);
+    } else if (onFileSelect) {
+      // For non-CSV/Excel files (PDF, images), just pass the file
+      onFileSelect(file);
+    }
+  }, [onFileSelect, onDataParsed]);
+
   const handleFileSelect = useCallback(
     (file: File) => {
       setFileName(file.name);
-      onFileSelect(file);
+      parseFile(file);
+      if (onFileSelect) {
+        const ext = file.name.split(".").pop()?.toLowerCase();
+        if (ext !== "csv" && ext !== "xlsx" && ext !== "xls") {
+          onFileSelect(file);
+        }
+      }
       toast.success(`${file.name} selected successfully`);
     },
-    [onFileSelect]
+    [parseFile, onFileSelect]
   );
 
   const handleDrop = useCallback(
@@ -83,13 +139,13 @@ export function FileUpload({
             <Upload className="w-6 h-6 text-muted-foreground" />
           </div>
           <div>
-            <p className="text-sm font-medium">Upload Document</p>
+            <p className="text-sm font-medium">{label}</p>
             <p className="text-xs text-muted-foreground mt-1">
               Drag & drop or click to upload
             </p>
             <div className="flex items-center justify-center gap-2 mt-2">
-              <FileText className="w-3 h-3 text-emerald-600" />
-              <span className="text-xs text-muted-foreground">PDF, JPG, PNG</span>
+              <FileSpreadsheet className="w-3 h-3 text-emerald-600" />
+              <span className="text-xs text-muted-foreground">CSV, Excel, PDF, JPG, PNG</span>
             </div>
           </div>
           <Button
